@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using System.Diagnostics;
+using Unity.Collections;
 using UnityEngine;
 using Unity.Mathematics;
 using Debug = UnityEngine.Debug;
@@ -14,19 +15,41 @@ public class PathfindingTester : MonoBehaviour
     [SerializeField] private LayerMask _obstacleLayerMask;
 
     private HashSet<int2> _obstacles;
-    private HashSet<int2> _lastPath;
+    private NativeList<int2> _lastPath;
+    private Stopwatch _stopwatch;
+    
+    private bool _repainted;
 
     private void Start()
     {
         _grid = new Grid(_gridSettings);
+        _obstacles = new HashSet<int2>();
+        _stopwatch = new Stopwatch();
+
         GetComponent<GridDebug>().SetGrid(_grid);
+        TestPathfinding();
     }
 
     private void Update()
     {
+        // Waiting for the gizmos to repaint before disposing
+        if (!_repainted) 
+            return;
+        _repainted = false;
+        _lastPath.Dispose();
+
+        _obstacles = GetObstacles();
+        
+        _stopwatch.Restart();
         TestPathfinding();
+        _stopwatch.Stop();
+        Debug.Log((_stopwatch.Elapsed.TotalMilliseconds + $"ms"));
     }
 
+    private void OnDestroy()
+    {
+        _lastPath.Dispose();
+    }
 
     private void TestPathfinding()
     {
@@ -45,23 +68,17 @@ public class PathfindingTester : MonoBehaviour
             G = int.MaxValue, 
             H = int.MaxValue
         };
-
-        Stopwatch stopwatch = new Stopwatch();
-        stopwatch.Start();
-
-        _obstacles = GetObstacles();
-        _lastPath = Pathfinding.FindPath(startNode, endNode, new int2(_grid.Width, _grid.Height), _obstacles);
-        stopwatch.Stop();
-        Debug.Log((stopwatch.Elapsed.TotalMilliseconds + $"ms"));
         
+        _lastPath = Pathfinding.FindPath(startNode, endNode, new int2(_grid.Width, _grid.Height), _obstacles);
     }
+
     
     /// <summary>
     /// Grossly get all the obstacles in the scene and add them to the obstacles HashSet
     /// </summary>
     private HashSet<int2> GetObstacles()
     {
-        _obstacles = new HashSet<int2>();
+        _obstacles.Clear();
         
         for (int x = 0; x < _grid.Cells.GetLength(0); x++)
         {
@@ -115,5 +132,7 @@ public class PathfindingTester : MonoBehaviour
             cellPos = _grid.CellToWorldPosition(node.x, node.y);
             Gizmos.DrawCube(cellPos + Vector3.up * 0.05f, new Vector3(cellSize, 0, cellSize));
         }
+
+        _repainted = true;
     }
 }

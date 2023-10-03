@@ -16,15 +16,15 @@ public class Pathfinding
         public float F => G + H;
     }
     
-    public static HashSet<int2> FindPath(Node startNode, Node endNode, int2 dimensions, HashSet<int2> obstacles)
+    public static NativeList<int2> FindPath(Node startNode, Node endNode, int2 dimensions, HashSet<int2> obstacles)
     {
         NativeHashMap<int2, Node> nodes1 = new NativeHashMap<int2, Node>(1000, Allocator.TempJob);
         NativeHashMap<int2, Node> nodes2 = new NativeHashMap<int2, Node>(1000, Allocator.TempJob);
         NativeArray<JobHandle> jobHandleArray = new NativeArray<JobHandle>(2, Allocator.TempJob);
         
-        NativeHashSet<int2> obs = new NativeHashSet<int2>(obstacles.Count, Allocator.TempJob);
+        NativeList<int2> obs = new NativeList<int2>(obstacles.Count, Allocator.TempJob);
         foreach (var obstacle in obstacles)
-            obs.Add(obstacle);
+            obs.AddNoResize(obstacle);
         
         for (int i = 0; i < 2; i++) 
         {
@@ -41,21 +41,17 @@ public class Pathfinding
         }
         JobHandle.CompleteAll(jobHandleArray);
         
-        HashSet<int2> calculatedPath;
+        NativeList<int2> calculatedPath = new NativeList<int2>(30,Allocator.Persistent);
+        calculatedPath.AddNoResize(startNode.Coord);
         
         // End node reached, calculate path
         if (nodes1.ContainsKey(endNode.Coord))// && nodes2.ContainsKey(startNode.Coord))
         {
-            calculatedPath = ReconstructPath(endNode.Coord, startNode.Coord, nodes1);
+            ReconstructPath(endNode.Coord, startNode.Coord, nodes1, ref calculatedPath);
         } 
-        // If start == end, return the start node
-        else if (nodes1.IsEmpty)
-        {
-            calculatedPath = new HashSet<int2> {startNode.Coord};
-        }
-        // Target nodes never reached for both jobs
+        // Target nodes never reached
         // Calculating the closest node meeting point
-        else
+        else if (!nodes1.IsEmpty)
         {
             int2 result = int2.zero;
             float closestDistance = int.MaxValue;
@@ -73,8 +69,8 @@ public class Pathfinding
                 }
             }
             
-            calculatedPath = ReconstructPath(result, startNode.Coord, nodes1);
-            calculatedPath.Add(result);
+            ReconstructPath(result, startNode.Coord, nodes1, ref calculatedPath);
+            calculatedPath.AddNoResize(result);
         }
 
         nodes1.Dispose();
@@ -85,9 +81,9 @@ public class Pathfinding
         return calculatedPath;
     }
 
-    private static HashSet<int2> ReconstructPath(int2 endNodeCoord, int2 startNodeCoord, NativeHashMap<int2, Node> nodes)
+    private static void ReconstructPath(int2 endNodeCoord, int2 startNodeCoord, NativeHashMap<int2, Node> nodes, ref NativeList<int2> calculatedPath)
     {
-        HashSet<int2> calculatedPath = new HashSet<int2>();
+        calculatedPath.Clear();
         int2 currentCoord = endNodeCoord;
 
         if (nodes.Count != 0)
@@ -95,12 +91,17 @@ public class Pathfinding
             while (!currentCoord.Equals(startNodeCoord))
             {
                 currentCoord = nodes[currentCoord].Parent;
-                calculatedPath.Add(currentCoord);
+                calculatedPath.AddNoResize(currentCoord);
             }
         }
 
-        calculatedPath.Add(endNodeCoord);
-        return calculatedPath;
+        calculatedPath.AddNoResize(endNodeCoord);
+
+        // Reverse the path in-place
+        for (int i = 0, j = calculatedPath.Length - 1; i < j; i++, j--)
+        {
+            (calculatedPath[i], calculatedPath[j]) = (calculatedPath[j], calculatedPath[i]);
+        }
     }
     
     private static float SqrDistance(int2 coordA, int2 coordB)
@@ -113,17 +114,17 @@ public class Pathfinding
     [BurstCompile(CompileSynchronously = true)]
     private struct PathJob : IJob
     {
-        [ReadOnly] public NativeHashSet<int2> Obstacles;
+        [ReadOnly] public NativeList<int2> Obstacles;
         public NativeHashMap<int2, Node> SearchedNodes;
-        public int2 Dims;
+        [ReadOnly] public int2 Dims;
         
-        public Node StartNode;
-        public Node EndNode;
+        [ReadOnly] public Node StartNode;
+        [ReadOnly] public Node EndNode;
 
         public void Execute()
         {
             NativeHeap<Node, Min> minSet = new NativeHeap<Node, Min>(Allocator.Temp);
-            NativeHashMap<int2, Node> openSet = new NativeHashMap<int2, Pathfinding.Node>(1000, Allocator.Temp);
+            NativeHashMap<int2, Node> openSet = new NativeHashMap<int2, Node>(1000, Allocator.Temp);
 
             Node currentNode = StartNode;
             StartNode.G = 0;
@@ -141,7 +142,6 @@ public class Pathfinding
             offsets[7] = new int2(-1, 1);
 
             int counter = 0;
-            
 
             // No more node to explore OR reached our goal
             while (minSet.Count != 0 && !currentNode.Coord.Equals(EndNode.Coord))
@@ -187,16 +187,9 @@ public class Pathfinding
                 // Remove the node we came from
                 minSet.Pop();
 
-                counter++;
-                if (counter > 500)
-                {
+                if (++counter > 500)
                     break;
-                }
             }
-            
-            openSet.Dispose();
-            minSet.Dispose();
-            offsets.Dispose();
         }
     }
     
