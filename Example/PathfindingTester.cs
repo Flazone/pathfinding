@@ -1,7 +1,6 @@
 using System.Collections.Generic;
 using System.Diagnostics;
 using UnityEngine;
-using Unity.Collections;
 using Unity.Mathematics;
 using Debug = UnityEngine.Debug;
 
@@ -14,7 +13,7 @@ public class PathfindingTester : MonoBehaviour
     [SerializeField] private Transform _targetPosition;
     [SerializeField] private LayerMask _obstacleLayerMask;
 
-    private NativeHashSet<int2> _obstacles;
+    private HashSet<int2> _obstacles;
     private HashSet<int2> _lastPath;
 
     private void Start()
@@ -60,10 +59,9 @@ public class PathfindingTester : MonoBehaviour
     /// <summary>
     /// Grossly get all the obstacles in the scene and add them to the obstacles HashSet
     /// </summary>
-    private NativeHashSet<int2> GetObstacles()
+    private HashSet<int2> GetObstacles()
     {
-        _obstacles.Dispose();
-        _obstacles = new NativeHashSet<int2>(1000, Allocator.TempJob);
+        _obstacles = new HashSet<int2>();
         
         for (int x = 0; x < _grid.Cells.GetLength(0); x++)
         {
@@ -89,8 +87,9 @@ public class PathfindingTester : MonoBehaviour
     
     public void OnDrawGizmos()
     {
-        if (_grid == null)
+        if (_grid == null || _obstacles == null)
             return;
+        
         var cellSize = _grid.CellSize;
 
         foreach (int2 obstacle in _obstacles)

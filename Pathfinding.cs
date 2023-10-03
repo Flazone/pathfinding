@@ -16,17 +16,21 @@ public class Pathfinding
         public float F => G + H;
     }
     
-    public static HashSet<int2> FindPath(Node startNode, Node endNode, int2 dimensions, NativeHashSet<int2> obstacles)
+    public static HashSet<int2> FindPath(Node startNode, Node endNode, int2 dimensions, HashSet<int2> obstacles)
     {
         NativeHashMap<int2, Node> nodes1 = new NativeHashMap<int2, Node>(1000, Allocator.TempJob);
         NativeHashMap<int2, Node> nodes2 = new NativeHashMap<int2, Node>(1000, Allocator.TempJob);
         NativeArray<JobHandle> jobHandleArray = new NativeArray<JobHandle>(2, Allocator.TempJob);
-
+        
+        NativeHashSet<int2> obs = new NativeHashSet<int2>(obstacles.Count, Allocator.TempJob);
+        foreach (var obstacle in obstacles)
+            obs.Add(obstacle);
+        
         for (int i = 0; i < 2; i++) 
         {
             PathJob pathJob = new PathJob
             {
-                Obstacles = obstacles,
+                Obstacles = obs,
                 SearchedNodes = i == 0 ? nodes1 : nodes2,
             
                 Dims = dimensions,
@@ -35,13 +39,12 @@ public class Pathfinding
             };
             jobHandleArray[i] = pathJob.Schedule();
         }
-
         JobHandle.CompleteAll(jobHandleArray);
         
         HashSet<int2> calculatedPath;
         
         // End node reached, calculate path
-        if (nodes1.ContainsKey(endNode.Coord) && nodes2.ContainsKey(startNode.Coord))
+        if (nodes1.ContainsKey(endNode.Coord))// && nodes2.ContainsKey(startNode.Coord))
         {
             calculatedPath = ReconstructPath(endNode.Coord, startNode.Coord, nodes1);
         } 
@@ -49,7 +52,6 @@ public class Pathfinding
         else if (nodes1.IsEmpty)
         {
             calculatedPath = new HashSet<int2> {startNode.Coord};
-            return calculatedPath;
         }
         // Target nodes never reached for both jobs
         // Calculating the closest node meeting point
@@ -70,33 +72,34 @@ public class Pathfinding
                     }
                 }
             }
-
+            
             calculatedPath = ReconstructPath(result, startNode.Coord, nodes1);
             calculatedPath.Add(result);
         }
 
         nodes1.Dispose();
         nodes2.Dispose();
+        obs.Dispose();
         jobHandleArray.Dispose();
-        
+
         return calculatedPath;
     }
 
-    private static HashSet<int2> ReconstructPath(int2 arrivalNode, int2 departureNode, NativeHashMap<int2, Node> nodes)
+    private static HashSet<int2> ReconstructPath(int2 endNodeCoord, int2 startNodeCoord, NativeHashMap<int2, Node> nodes)
     {
         HashSet<int2> calculatedPath = new HashSet<int2>();
-        var currentCoord = arrivalNode;
+        int2 currentCoord = endNodeCoord;
 
         if (nodes.Count != 0)
         {
-            while (!currentCoord.Equals(departureNode))
+            while (!currentCoord.Equals(startNodeCoord))
             {
                 currentCoord = nodes[currentCoord].Parent;
                 calculatedPath.Add(currentCoord);
             }
         }
 
-        calculatedPath.Add(arrivalNode);
+        calculatedPath.Add(endNodeCoord);
         return calculatedPath;
     }
     
@@ -106,12 +109,12 @@ public class Pathfinding
         int b = coordB.y - coordA.y;
         return Mathf.Sqrt(a * a + b * b);
     }
-
+    
     [BurstCompile(CompileSynchronously = true)]
     private struct PathJob : IJob
     {
         [ReadOnly] public NativeHashSet<int2> Obstacles;
-        public NativeHashMap<int2, Node> SearchedNodes; //TODO: use a MinHeap
+        public NativeHashMap<int2, Node> SearchedNodes;
         public int2 Dims;
         
         public Node StartNode;
@@ -119,12 +122,13 @@ public class Pathfinding
 
         public void Execute()
         {
+            NativeHeap<Node, Min> minSet = new NativeHeap<Node, Min>(Allocator.Temp);
             NativeHashMap<int2, Node> openSet = new NativeHashMap<int2, Pathfinding.Node>(1000, Allocator.Temp);
 
             Node currentNode = StartNode;
             StartNode.G = 0;
             StartNode.H = SqrDistance(StartNode.Coord, EndNode.Coord);
-            openSet.Add(StartNode.Coord, StartNode);
+            minSet.Insert(StartNode);
             
             var offsets = new NativeArray<int2>(8, Allocator.Temp);
             offsets[0] = new int2(0, 1);
@@ -138,10 +142,11 @@ public class Pathfinding
 
             int counter = 0;
             
+
             // No more node to explore OR reached our goal
-            while (!openSet.IsEmpty && !currentNode.Coord.Equals(EndNode.Coord))
+            while (minSet.Count != 0 && !currentNode.Coord.Equals(EndNode.Coord))
             {
-                currentNode = openSet[GetLowestCostNode(openSet)];
+                currentNode = minSet.Peek();
                 SearchedNodes.TryAdd(currentNode.Coord, currentNode);
                 
                 for (int i = 0; i < offsets.Length; i++)
@@ -163,6 +168,7 @@ public class Pathfinding
                         G = currentNode.G + SqrDistance(currentNode.Coord, neighbourCoord),
                     };
 
+                    // if neighbour already open, but with an higher score than now 
                     if (openSet.ContainsKey(neighbour.Coord))
                     {
                         if (neighbour.G < openSet[neighbour.Coord].G)
@@ -174,38 +180,31 @@ public class Pathfinding
                     {
                         neighbour.H = SqrDistance(neighbourCoord, EndNode.Coord);
                         openSet.Add(neighbour.Coord, neighbour);
+                        minSet.Insert(neighbour);
                     }
                 }
-                
-                openSet.Remove(currentNode.Coord);
+
+                // Remove the node we came from
+                minSet.Pop();
 
                 counter++;
-                if (counter > 1000)
+                if (counter > 500)
                 {
                     break;
                 }
             }
-
+            
             openSet.Dispose();
+            minSet.Dispose();
             offsets.Dispose();
         }
-
-        private int2 GetLowestCostNode(NativeHashMap<int2, Node> openSet)
+    }
+    
+    private struct Min : IComparer<Node>
+    {
+        public int Compare(Node x, Node y)
         {
-            Node result = new Node();
-            float fCost = int.MaxValue;
-
-            foreach (var kvp in openSet)
-            {
-                var node = kvp.Value;
-                if (node.F < fCost)
-                {
-                    result = node;
-                    fCost = result.F;
-                }
-            }
-
-            return result.Coord;
+            return x.F.CompareTo(y.F);
         }
     }
 }
