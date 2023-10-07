@@ -440,7 +440,7 @@ namespace Unity.Collections {
         internal const int VALIDATION_ERROR_REMOVED = 3;
 
 #if ENABLE_UNITY_COLLECTIONS_CHECKS
-        internal unsafe static int NextId = 1;
+        internal unsafe int NextId;
         internal unsafe int Id;
 
         internal unsafe AtomicSafetyHandle m_Safety;
@@ -466,6 +466,7 @@ namespace Unity.Collections {
             }
 
             DisposeSentinel.Create(out m_Safety, out m_DisposeSentinel, disposeSentinelStackDepth, allocator);
+            NextId = 1; 
             Id = Interlocked.Increment(ref NextId);
 #endif
 

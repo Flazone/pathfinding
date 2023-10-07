@@ -1,6 +1,7 @@
-using System.Collections.Generic;
+using System;
 using System.Diagnostics;
 using Unity.Collections;
+using Unity.Jobs;
 using UnityEngine;
 using Unity.Mathematics;
 using Debug = UnityEngine.Debug;
@@ -14,20 +15,20 @@ public class PathfindingTester : MonoBehaviour
     [SerializeField] private Transform _targetPosition;
     [SerializeField] private LayerMask _obstacleLayerMask;
 
-    private HashSet<int2> _obstacles;
-    private NativeList<int2> _lastPath;
+    private NativeHashSet<int2> _obstacles;
+    private NativeList<int2> _calculatedPath;
     private Stopwatch _stopwatch;
-    
+
     private bool _repainted;
 
     private void Start()
     {
         _grid = new Grid(_gridSettings);
-        _obstacles = new HashSet<int2>();
         _stopwatch = new Stopwatch();
-
+        
         GetComponent<GridDebug>().SetGrid(_grid);
-        TestPathfinding();
+        
+        _repainted = true;
     }
 
     private void Update()
@@ -36,21 +37,28 @@ public class PathfindingTester : MonoBehaviour
         if (!_repainted) 
             return;
         _repainted = false;
-        _lastPath.Dispose();
-
+        
         _obstacles = GetObstacles();
         
         _stopwatch.Restart();
         TestPathfinding();
         _stopwatch.Stop();
+
         Debug.Log((_stopwatch.Elapsed.TotalMilliseconds + $"ms"));
     }
 
     private void OnDestroy()
     {
-        _lastPath.Dispose();
+        _obstacles.Dispose();
+        _calculatedPath.Dispose();
     }
 
+    
+    /// <summary>
+    /// In case of real usage, instead of scheduling and completing the job right away,
+    /// a system could enqueue all the path requests and schedule them in parallel -
+    /// taking advantage of the Job system.
+    /// </summary>
     private void TestPathfinding()
     {
         var startCoord = _grid.WorldPositionToCell(_startPosition.position).Coord;
@@ -69,20 +77,23 @@ public class PathfindingTester : MonoBehaviour
             H = int.MaxValue
         };
         
-        _lastPath = Pathfinding.FindPath(startNode, endNode, new int2(_grid.Width, _grid.Height), _obstacles);
+        _calculatedPath.Dispose();
+       
+        var pathJob = Pathfinding.FindPath(startNode, endNode, new int2(_grid.Width, _grid.Height), _obstacles, ref _calculatedPath);
+        pathJob.Schedule().Complete();
     }
 
-    
     /// <summary>
-    /// Grossly get all the obstacles in the scene and add them to the obstacles HashSet
+    /// Grossly get all the obstacles in the scene and add them to the obstacles list
     /// </summary>
-    private HashSet<int2> GetObstacles()
+    private NativeHashSet<int2> GetObstacles()
     {
-        _obstacles.Clear();
+        _obstacles.Dispose();
+        _obstacles = new NativeHashSet<int2>(100, Allocator.TempJob);
         
-        for (int x = 0; x < _grid.Cells.GetLength(0); x++)
+        for (int x = 0; x < _grid.Width; x++)
         {
-            for (int y = 0; y < _grid.Cells.GetLength(1); y++)
+            for (int y = 0; y < _grid.Height; y++)
             {
                 Cell cell = _grid.GetCell(x, y);
                 var pos = _grid.CellToWorldPosition(cell);
@@ -104,7 +115,10 @@ public class PathfindingTester : MonoBehaviour
     
     public void OnDrawGizmos()
     {
-        if (_grid == null || _obstacles == null)
+        if (_grid == null)
+            return;
+
+        if (!_obstacles.IsCreated)
             return;
         
         var cellSize = _grid.CellSize;
@@ -127,7 +141,7 @@ public class PathfindingTester : MonoBehaviour
 
         Gizmos.color = Color.cyan;
 
-        foreach (int2 node in _lastPath)
+        foreach (int2 node in _calculatedPath)
         {
             cellPos = _grid.CellToWorldPosition(node.x, node.y);
             Gizmos.DrawCube(cellPos + Vector3.up * 0.05f, new Vector3(cellSize, 0, cellSize));

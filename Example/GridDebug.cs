@@ -46,10 +46,12 @@ public class GridDebug : MonoBehaviour
         
         if (_drawValues)
         {
+#if UNITY_EDITOR
             Handles.Label(
                 cellPosition + new Vector3(0,0,0), 
                 new GUIContent(cell.Coord.x + "," + cell.Coord.y), 
-                _labelStyle);     
+                _labelStyle);
+#endif
         }
     }
     

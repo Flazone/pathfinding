@@ -91,10 +91,11 @@ public class Grid
 
     public Vector3 CellToWorldPosition(Cell cell)
     {
-        var cellPos = new Vector3(cell.X, 0, cell.Y) * _cellSize + _origin;
-        cellPos += new Vector3(1, 0, 1) * (_cellSize * 0.5f);
-        
-        return cellPos;
+        float offsetX = (cell.X + 0.5f) * _cellSize + _origin.x;
+        float offsetY = 0;
+        float offsetZ = (cell.Y + 0.5f) * _cellSize + _origin.z;
+    
+        return new Vector3(offsetX, offsetY, offsetZ);
     }
 
     public Cell WorldPositionToCell(Vector3 worldPosition)
@@ -115,8 +116,8 @@ public class Grid
 public struct Cell
 {
     public Vector2Int Coord;
-    public int X => (int)Coord.x;
-    public int Y => (int)Coord.y;
+    public int X => Coord.x;
+    public int Y => Coord.y;
     private int _value;
     
     public void SetValue(int value)
